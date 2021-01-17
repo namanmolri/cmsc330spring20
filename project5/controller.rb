@@ -8,10 +8,28 @@ require "sqlite3"
 
 AVATAR_DIR = "./static/avatars"
 SESSION_BITS = 32
+TOK_BITS = 32
 DATE_FMT = "%d %h %G at %R"
+FAIL_CASE = /(^[a-zA-Z0-9."()\s\w]+$)/
 
 #
 # Helpers
+def auth(user, password)
+		return nil if user !~ FAIL_CASE
+		query = %{
+		SELECT Avatar, Description
+		FROM Users
+		WHERE User = '#{user}' AND
+		Password = '#{password}'
+		}
+		@db.execute(query) do |user|
+			return {
+				:avatar => user[0],
+				:description => user[1]
+			}
+		end
+		nil
+	end
 #
 
 # upload_avatar : String File -> Boolean
@@ -69,13 +87,12 @@ module Tokens
 	# issue_token : -> Integer
 	# Returns cryptographically secure token.
 	def issue_token
-		0
-	end
+		SecureRandom.random_number(2 ** TOK_BITS)	end
 
 	# assign_token : String -> Integer
 	# Assigns a token identifier to a user and returns it.
 	def assign_token(user)
-		0
+		@token[user] = issue_token
 	end
 end
 
@@ -94,7 +111,7 @@ module Access
 	# If credentials are valid, assigns session identifier to user
 	# and returns identifier, otherwise returns nil.
 	def authenticate(user, passwd)
-		assign_session user if get_user(user)
+		assign_session user if auth(user, passwd)
 	end
 
 	# authorize : String Integer -> Boolean
@@ -125,6 +142,9 @@ module User
         # users matching the query (by name or description).
         def search(user_query)
                 users = []
+                if user_query !~ FAIL_CASE
+                	return { :query => nil, :users => users } 
+                else
                 query = %{
                 SELECT User, Avatar, Description
                 FROM Users
@@ -139,6 +159,7 @@ module User
                         }
                 end
                 { :query => user_query, :users => users }
+            end
         end
 
 	# register : String String File String String -> Boolean
@@ -146,6 +167,8 @@ module User
 	# password and confirm password match. Returns success status.
 	def register(user, filename, file, password, confirm)
 		return false if password != confirm
+		return false if get_user(user) != nil	
+		return false if user !~ FAIL_CASE || password !~ FAIL_CASE || confirm !~ FAIL_CASE
 		upload_avatar(filename, file)
 		query = %{
 		INSERT INTO Users(User, Password, Avatar)
@@ -158,6 +181,7 @@ module User
 	# get_user: String -> (Hash or NilClass)
 	# Gets user preferences of given user or nil if non-existent
 	def get_user(user)
+		return nil if user !~ FAIL_CASE
 		query = %{
 		SELECT Avatar, Description
 		FROM Users
@@ -175,6 +199,9 @@ module User
 	# update_prefs : String Integer String Integer -> Boolean
 	# Update preferences of given user returning success status.
 	def update_prefs(user, session, description, token)
+		return false if token != @token[user] 
+		return false if session != @sessions[user]
+		return false if description !~ FAIL_CASE || user !~ FAIL_CASE
 		query = %{
 		UPDATE Users
 		SET Description = '#{description}'
@@ -199,6 +226,9 @@ module Posts
 	# Publish post from user with given content. Returns
 	# success status.
 	def publish_post(user, session, content, token)
+		return false if token != @token[user] 
+		return false if session != @sessions[user]
+		return false if content !~ FAIL_CASE || user !~ FAIL_CASE
 		timestamp = Time.now.to_i
 		query = %{
 		INSERT INTO Posts(User, Content, Date)
@@ -260,5 +290,6 @@ class Controller
 	def initialize
 		@db = SQLite3::Database.new "data.db"
 		@sessions = {}
+		@token = {}
 	end
 end
